@@ -94,8 +94,8 @@ button{cursor:pointer}
 /* SVG */
 .edge{stroke:var(--edge);stroke-width:1.4}
 .edge.on{stroke:var(--accent);stroke-width:3}
-.link{stroke:var(--edge);stroke-width:1.2}
-.linkhead{fill:var(--edge)}
+.link{stroke:var(--edge);stroke-width:1.4}
+.linkhead{fill:none;stroke:var(--edge);stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
 .box{stroke-width:1.6}
 .leaf .box{fill:var(--leaf-bg);stroke:var(--leaf-line)}
 .idx .box{fill:var(--idx-bg);stroke:var(--idx-line)}
@@ -217,58 +217,76 @@ const E = (() => {
         add({ algo: ['ins-1'], title: `${k}* already exists`, text: `Search keys are unique here. Nothing changes.`, hl: { nodes: { [L.id]: 'active' }, keys: { [L.id]: { [k]: 'moved' } }, tags: { [L.id]: 'L' } } });
         return;
       }
+      const tagL = { [L.id]: 'L' };
       if (L.keys.length < t.cap) {
+        add({ algo: ['ins-2a'], title: `L has space`, text: `L holds ${L.keys.length} of ${t.cap} entries, so ${K(k, 1)} fits.`, hl: { nodes: { [L.id]: 'active' }, tags: tagL } });
         insertSorted(L.keys, k);
-        add({ algo: ['ins-2a'], title: `Insert ${k}* into L`, text: `L has space.${DONE}`, hl: { nodes: { [L.id]: 'new' }, keys: { [L.id]: { [k]: 'new' } }, tags: { [L.id]: 'L' } } });
+        add({ algo: ['ins-2a'], title: `Insert ${k}* into L`, text: `It goes in at its sorted position.${DONE}`, hl: { nodes: { [L.id]: 'new' }, keys: { [L.id]: { [k]: 'new' } }, tags: tagL } });
         return;
       }
+      add({ algo: ['ins-2b'], title: `L is full`, text: `L already holds ${t.cap} of ${t.cap} entries. ${K(k, 1)} does not fit, so L must <b>split</b>.`, hl: { nodes: { [L.id]: 'warn' }, tags: tagL } });
       insertSorted(L.keys, k);
       const mid = Math.floor((t.cap + 1) / 2);
       add({
-        algo: ['ins-2b'], title: `Overflow in L`,
-        text: `L is full, so ${K(k, 1)} does not fit. L must <b>split</b>.`,
-        hl: { nodes: { [L.id]: 'warn' }, keys: { [L.id]: { [k]: 'new' } }, tags: { [L.id]: 'L' } },
+        algo: ['ins-2b'], title: `Line up all ${t.cap + 1} entries`,
+        text: `Put ${K(k, 1)} at its sorted position. The middle key ${K(L.keys[mid], 1)} marks where to split.`,
+        hl: { nodes: { [L.id]: 'warn' }, keys: { [L.id]: { [k]: 'new' } }, tags: tagL },
         scratch: { items: L.keys.slice(), mid, star: true, note: 'middle key' }
       });
       let cur = L;
       while (true) {
-        const m = Math.floor((t.cap + 1) / 2);
-        const right = { id: t.nextId++, leaf: cur.leaf, keys: [], children: [], from: cur.id };
-        let up;
-        if (cur.leaf) { right.keys = cur.keys.splice(m); up = right.keys[0]; }
-        else { right.keys = cur.keys.splice(m + 1); up = cur.keys.pop(); right.children = cur.children.splice(m + 1); }
-        right.floating = { key: up, mode: cur.leaf ? 'copy up' : 'push up' };
+        const m = Math.floor((t.cap + 1) / 2), leaf = cur.leaf;
+        const A = leaf ? 'L' : 'N', B = leaf ? 'L₂' : 'N₂', al = [leaf ? 'ins-2b' : 'ins-3'], lv = leaf ? null : 'index level';
+        const right = { id: t.nextId++, leaf, keys: [], children: [], from: cur.id, loose: true };
         let parent, pi, grew = false;
         if (path.length) ({ n: parent, i: pi } = path.pop());
-        else { parent = { id: t.nextId++, leaf: false, keys: [], children: [cur], ghost: true }; t.root = parent; pi = 0; grew = true; }
+        else { parent = { id: t.nextId++, leaf: false, keys: [], children: [cur], ghost: 'hidden' }; t.root = parent; pi = 0; grew = true; }
         parent.children.splice(pi + 1, 0, right);
-        const rootNote = grew ? ` The root split, so a new root is needed.` : '';
-        if (cur.leaf) add({
-          algo: ['ins-2b'], title: `Split L, copy up ${up}`,
-          text: `The middle key ${K(up)} is <b>copied up</b>: it stays in L₂ and a copy goes to the parent.${rootNote}`,
-          hl: { nodes: { [cur.id]: 'active', [right.id]: 'new' }, keys: { [cur.id]: { [k]: 'new' }, [right.id]: { [k]: 'new', [up]: 'up' } }, tags: { [cur.id]: 'L', [right.id]: 'L₂' } }
-        });
-        else add({
-          algo: ['ins-3'], level: 'index level', title: `Split, push up ${up}`,
-          text: `The middle key ${K(up)} is <b>pushed up</b>: it moves to the parent and leaves this level.${rootNote}`,
-          hl: { nodes: { [cur.id]: 'active', [right.id]: 'new' } }
-        });
-        delete right.floating; delete parent.ghost;
+        const tags = { [cur.id]: A, [right.id]: B }, pair = { [cur.id]: 'active', [right.id]: 'new' };
+        const all = (ks, c) => { const o = {}; ks.forEach(x => o[x] = c); return o; };
+        // 1. allocate the new node
+        add({ algo: al, level: lv, title: `Create a new ${leaf ? 'leaf' : 'index node'} ${B}`, text: `${B} starts empty, to the right of ${A}. Nothing points to it yet.`, hl: { nodes: pair, tags } });
+        // 2. move the upper half across
+        let up;
+        if (leaf) {
+          right.keys = cur.keys.splice(m);
+          add({ algo: al, title: `Move ${right.keys.length} entries to ${B}`, text: `${A} keeps the first ${m} entries. Everything from the middle key ${K(right.keys[0], 1)} on moves to ${B}.`, hl: { nodes: pair, keys: { [right.id]: all(right.keys, 'moved') }, tags } });
+          up = right.keys[0];
+          right.floating = { key: up, mode: 'copy up' };
+          // 3. copy up
+          add({ algo: al, title: `Copy up ${up}`, text: `The middle key ${K(up)} is <b>copied up</b>: ${K(up, 1)} stays in ${B} and a copy heads for the parent.`, hl: { nodes: pair, keys: { [right.id]: { [up]: 'up' } }, tags } });
+        } else {
+          right.keys = cur.keys.splice(m + 1); right.children = cur.children.splice(m + 1);
+          add({ algo: al, level: lv, title: `Move ${right.keys.length} keys and ${right.children.length} pointers to ${B}`, text: `Everything right of the middle key ${K(cur.keys[m])} moves to ${B}. The middle key is left over at the end of ${A}, with no pointer after it.`, hl: { nodes: pair, keys: { [right.id]: all(right.keys, 'moved'), [cur.id]: { [cur.keys[m]]: 'up' } }, tags } });
+          up = cur.keys.pop();
+          right.floating = { key: up, mode: 'push up' };
+          // 3. push up
+          add({ algo: al, level: lv, title: `Push up ${up}`, text: `The middle key ${K(up)} is <b>pushed up</b>: it leaves this level and heads for the parent.`, hl: { nodes: pair, tags } });
+        }
+        // 4. no parent → make one
+        if (grew) {
+          parent.ghost = 'pending';
+          add({ algo: ['ins-3'], level: 'root', title: `No parent: create a new root`, text: `${A} was the root, so ${K(up)} has nowhere to go. A new, empty root is created above.`, hl: { nodes: pair, tags } });
+        }
+        // 5. parent takes the key and the pointer
+        delete right.floating; delete right.loose; delete parent.ghost;
         parent.keys.splice(pi, 0, up);
-        if (parent.keys.length <= t.cap) {
-          add({
-            algo: ['ins-3'], title: grew ? `New root: height grows` : `Parent takes ${up}`,
-            text: grew ? `The new root holds ${K(up)}. The root is exempt from the fill factor.${DONE}` : `The parent has space.${DONE}`,
-            hl: { nodes: { [parent.id]: 'new', [right.id]: 'new' }, keys: { [parent.id]: { [up]: 'up' } } }
-          });
+        if (grew) {
+          add({ algo: ['ins-3'], level: 'root', title: `The new root takes ${up}: height grows`, text: `It holds ${K(up)}, with one pointer to ${A} and one to ${B}. The root is exempt from the fill factor.${DONE}`, hl: { nodes: { [parent.id]: 'new' }, keys: { [parent.id]: { [up]: 'up' } }, tags } });
           return;
         }
-        const m2 = Math.floor((t.cap + 1) / 2);
+        const fits = parent.keys.length <= t.cap;
         add({
-          algo: ['ins-3'], title: `Overflow in the parent`,
-          text: `${K(up)} does not fit. Split again, one level up.`,
-          hl: { nodes: { [parent.id]: 'warn' }, keys: { [parent.id]: { [up]: 'up' } } },
-          scratch: { items: parent.keys.slice(), mid: m2, star: false, note: 'middle key' }
+          algo: ['ins-3'], title: `The parent takes ${up}`,
+          text: `${K(up)} goes in together with a pointer to ${B}. ` + (fits ? `The parent has space.${DONE}` : `That makes ${parent.keys.length} keys, one more than fits.`),
+          hl: { nodes: { [parent.id]: fits ? 'new' : 'warn', [right.id]: 'new' }, keys: { [parent.id]: { [up]: 'up' } }, tags }
+        });
+        if (fits) return;
+        add({
+          algo: ['ins-3'], level: 'index level', title: `Overflow in the parent`,
+          text: `The parent must split too. Call it N. Its middle key is ${K(parent.keys[m])}.`,
+          hl: { nodes: { [parent.id]: 'warn' }, tags: { [parent.id]: 'N' } },
+          scratch: { items: parent.keys.slice(), mid: m, star: false, note: 'middle key' }
         });
         cur = parent;
       }
@@ -277,39 +295,103 @@ const E = (() => {
     function fixUnderflow(n, path) {
       const { n: p, i } = path.pop();
       const left = i > 0 ? p.children[i - 1] : null, right = i < p.children.length - 1 ? p.children[i + 1] : null;
-      const leaf = n.leaf;
-      const min = leaf ? minLeaf(t) : minPtr(t) - 1;
-      const can = s => s && s.keys.length > min;
-      const sib = (s, side) => `${side}: ${s ? (can(s) ? 'can lend' : 'at minimum') : 'none'}`;
-      const hlS = {}; if (left) hlS[left.id] = 'sib'; if (right) hlS[right.id] = 'sib'; hlS[n.id] = 'warn';
-      add({
-        algo: ['del-2b'], level: leaf ? null : 'index level', title: `Can a sibling lend?`,
-        text: `${sib(left, 'Left')}. ${sib(right, 'Right')}.${can(left) || can(right) ? '' : ' Re-distribution fails, so <b>merge</b>.'}`,
-        hl: { nodes: hlS, tags: leaf ? { [n.id]: 'L' } : {} }
+      const leaf = n.leaf, name = leaf ? 'L' : 'N', lv = leaf ? null : 'index level', tags = { [n.id]: name };
+      const min = leaf ? minLeaf(t) : minPtr(t), unit = leaf ? 'entries' : 'pointers';
+      const size = s => leaf ? s.keys.length : s.children.length;
+      const can = s => s && size(s) > min;
+      const all = (ks, c) => { const o = {}; ks.forEach(x => o[x] = c); return o; };
+      const ask = (s, side, note) => add({
+        algo: ['del-2b'], level: lv, title: `Can the ${side} sibling lend?`,
+        text: (can(s) ? `It has ${size(s)} ${unit}, more than the minimum of ${min}. <b>It can lend one.</b>` : `It has ${size(s)} ${unit}, exactly the minimum of ${min}. It cannot lend.`) + note,
+        hl: { nodes: { [n.id]: 'warn', [s.id]: 'sib' }, tags }
       });
-      if (can(left) || can(right)) {
-        const fromLeft = can(left), s = fromLeft ? left : right, si = fromLeft ? i - 1 : i, oldSep = p.keys[si], side = fromLeft ? 'left' : 'right';
+      // check one sibling at a time: left first, then right
+      let s = null;
+      if (left) { ask(left, 'left', !right && !can(left) ? ` There is no right sibling under this parent.` : ''); if (can(left)) s = left; }
+      if (!s && right) { ask(right, 'right', left ? '' : ` (There is no left sibling under this parent.)`); if (can(right)) s = right; }
+      if (s) {
+        const fromLeft = s === left, si = fromLeft ? i - 1 : i, oldSep = p.keys[si], side = fromLeft ? 'left' : 'right';
         let moved;
         if (leaf) {
-          if (fromLeft) { moved = left.keys.pop(); n.keys.unshift(moved); p.keys[si] = n.keys[0]; }
-          else { moved = right.keys.shift(); n.keys.push(moved); p.keys[si] = right.keys[0]; }
-          add({ algo: ['del-2b'], title: `Borrow ${moved}* from the ${side}`, text: `The separator key in the parent becomes ${K(p.keys[si])}.${DONE}`, hl: { nodes: { [n.id]: 'new', [s.id]: 'sib', [p.id]: 'active' }, keys: { [n.id]: { [moved]: 'moved' }, [p.id]: { [p.keys[si]]: 'up' } } } });
+          if (fromLeft) { moved = s.keys.pop(); n.keys.unshift(moved); } else { moved = s.keys.shift(); n.keys.push(moved); }
+          add({
+            algo: ['del-2b'], title: `Move ${moved}* from the ${side} sibling`,
+            text: `L is back to ${n.keys.length} entries. But the separator ${K(oldSep)} in the parent is now wrong: ${K(moved, 1)} sits to its ${fromLeft ? 'right and is smaller' : 'left and is not smaller'}.`,
+            hl: { nodes: { [n.id]: 'new', [s.id]: 'sib' }, keys: { [n.id]: { [moved]: 'moved' }, [p.id]: { [oldSep]: 'del' } }, tags }
+          });
+          const first = fromLeft ? n : s, ns = first.keys[0];
+          p.keys[si] = ns;
+          add({
+            algo: ['del-2b'], title: `Replace separator ${oldSep} with ${ns}`,
+            text: `The new separator is a copy of ${K(ns, 1)}, the first entry of the leaf on its right.${DONE}`,
+            hl: { nodes: { [p.id]: 'active' }, keys: { [p.id]: { [ns]: 'up' }, [first.id]: { [ns]: 'up' } }, tags }
+          });
         } else {
+          p.keys[si] = null;
+          if (fromLeft) { n.keys.unshift(oldSep); n.ptrOff = 1; } else n.keys.push(oldSep);
+          add({
+            algo: ['del-2b'], level: lv, title: `Pull down ${oldSep}`,
+            text: `The separator ${K(oldSep)} comes down from the parent into N, leaving a gap. It has no pointer of its own yet.`,
+            hl: { nodes: { [n.id]: 'new', [s.id]: 'sib', [p.id]: 'active' }, keys: { [n.id]: { [oldSep]: 'moved' } }, tags }
+          });
+          if (fromLeft) moved = s.keys.pop(); else { moved = s.keys[0]; s.keys[0] = null; }
+          p.keys[si] = moved;
+          add({
+            algo: ['del-2b'], level: lv, title: `Push up ${moved}`,
+            text: `The ${side} sibling's ${fromLeft ? 'last' : 'first'} key ${K(moved)} fills the gap in the parent. The sibling is left with one pointer too many.`,
+            hl: { nodes: { [n.id]: 'new', [s.id]: 'sib', [p.id]: 'active' }, keys: { [p.id]: { [moved]: 'up' } }, tags }
+          });
           let sub;
-          if (fromLeft) { moved = left.keys.pop(); sub = left.children.pop(); n.keys.unshift(oldSep); n.children.unshift(sub); p.keys[si] = moved; }
-          else { moved = right.keys.shift(); sub = right.children.shift(); n.keys.push(oldSep); n.children.push(sub); p.keys[si] = moved; }
-          add({ algo: ['del-2b'], level: 'index level', title: `Borrow through the parent`, text: `${K(oldSep)} comes down, ${K(moved)} goes up, and one subtree moves across.${DONE}`, hl: { nodes: { [n.id]: 'new', [s.id]: 'sib', [p.id]: 'active', [sub.id]: 'moved' }, keys: { [n.id]: { [oldSep]: 'moved' }, [p.id]: { [moved]: 'up' } } } });
+          if (fromLeft) { sub = s.children.pop(); n.children.unshift(sub); delete n.ptrOff; }
+          else { s.keys.shift(); sub = s.children.shift(); n.children.push(sub); }
+          add({
+            algo: ['del-2b'], level: lv, title: `Move one subtree across`,
+            text: `The sibling's spare pointer moves to N, next to ${K(oldSep)}.${DONE}`,
+            hl: { nodes: { [n.id]: 'new', [s.id]: 'sib', [sub.id]: 'moved' }, tags }
+          });
         }
         return;
       }
       const withLeft = !!left, Ln = withLeft ? left : n, Rn = withLeft ? n : right, si = withLeft ? i - 1 : i, sep = p.keys[si];
-      if (leaf) Ln.keys = Ln.keys.concat(Rn.keys);
-      else { Ln.keys = Ln.keys.concat([sep], Rn.keys); Ln.children = Ln.children.concat(Rn.children); }
+      const kind = leaf ? 'leaf' : 'node';
+      add({
+        algo: ['del-2c'], level: lv, title: `Re-distribution fails: merge`,
+        text: `No sibling can lend. <b>Merge</b> ${name} with its ${withLeft ? 'left' : 'right'} sibling.`,
+        hl: { nodes: { [n.id]: 'warn', [(withLeft ? left : right).id]: 'sib' }, tags }
+      });
+      if (leaf) {
+        const mv = Rn.keys; Ln.keys = Ln.keys.concat(mv); Rn.keys = [];
+        add({
+          algo: ['del-2c'], title: `Move ${mv.length === 1 ? 'the entry' : `all ${mv.length} entries`} into the left leaf`,
+          text: `The right leaf is now empty.`,
+          hl: { nodes: { [Ln.id]: 'new', [Rn.id]: 'warn' }, keys: { [Ln.id]: all(mv, 'moved'), [p.id]: { [sep]: 'del' } } }
+        });
+        p.keys[si] = null;
+        add({
+          algo: ['del-2c'], title: `Toss ${sep}`,
+          text: `The separator ${K(sep)} no longer separates anything. It is <b>tossed</b> from the parent, leaving a gap.`,
+          hl: { nodes: { [p.id]: 'active', [Rn.id]: 'warn' } }
+        });
+      } else {
+        p.keys[si] = null; Ln.keys.push(sep);
+        add({
+          algo: ['del-2c'], level: lv, title: `Pull down ${sep}`,
+          text: `The separator ${K(sep)} is <b>pulled down</b> from the parent to the end of the left node, leaving a gap.`,
+          hl: { nodes: { [Ln.id]: 'new', [Rn.id]: 'sib', [p.id]: 'active' }, keys: { [Ln.id]: { [sep]: 'moved' } } }
+        });
+        const mv = Rn.keys, np = Rn.children.length;
+        Ln.keys = Ln.keys.concat(mv); Ln.children = Ln.children.concat(Rn.children); Rn.keys = []; Rn.children = [];
+        add({
+          algo: ['del-2c'], level: lv, title: `Move ${mv.length} key${mv.length === 1 ? '' : 's'} and ${np} pointers into the left node`,
+          text: `They go after ${K(sep)}. The right node is now empty.`,
+          hl: { nodes: { [Ln.id]: 'new', [Rn.id]: 'warn' }, keys: { [Ln.id]: all(mv, 'moved') } }
+        });
+      }
       p.keys.splice(si, 1); p.children.splice(si + 1, 1);
       add({
-        algo: ['del-2c'], level: leaf ? null : 'index level', title: leaf ? `Merge leaves, toss ${sep}` : `Merge, pull down ${sep}`,
-        text: leaf ? `The separator key ${K(sep)} is <b>tossed</b> from the parent.` : `The separator key ${K(sep)} is <b>pulled down</b> between the two halves.`,
-        hl: { nodes: { [Ln.id]: 'new', [p.id]: 'active' }, keys: leaf ? {} : { [Ln.id]: { [sep]: 'moved' } } }
+        algo: ['del-2c'], level: lv, title: `Remove the empty ${kind}`,
+        text: `Its pointer leaves the parent and the gap closes. The parent now has ${p.children.length} pointer${p.children.length === 1 ? '' : 's'}.`,
+        hl: { nodes: { [Ln.id]: 'new', [p.id]: 'active' } }
       });
       if (p === t.root) {
         if (p.keys.length === 0) {
@@ -319,31 +401,33 @@ const E = (() => {
         } else add({ algo: ['del-2c'], level: 'root', title: `The root is exempt`, text: `The fill factor does not apply to the root.${DONE}`, hl: { nodes: { [p.id]: 'active' } } });
         return;
       }
-      if (p.keys.length + 1 >= minPtr(t)) {
-        add({ algo: ['del-2c'], title: `Parent meets the fill factor`, text: `It still has at least ${minPtr(t)} pointers.${DONE}`, hl: { nodes: { [p.id]: 'active' } } });
+      if (p.children.length >= minPtr(t)) {
+        add({ algo: ['del-2c'], title: `Parent meets the fill factor`, text: `${p.children.length} ≥ ${minPtr(t)} pointers.${DONE}`, hl: { nodes: { [p.id]: 'active' } } });
         return;
       }
-      add({ algo: ['del-2c'], level: 'index level', title: `Underflow in the parent`, text: `It needs at least ${minPtr(t)} pointers. Repair it the same way, one level up.`, hl: { nodes: { [p.id]: 'warn' } } });
+      add({ algo: ['del-2c'], level: 'index level', title: `Underflow in the parent`, text: `It has ${p.children.length} pointers and needs at least ${minPtr(t)}. Call it N and repair it the same way, one level up.`, hl: { nodes: { [p.id]: 'warn' }, tags: { [p.id]: 'N' } } });
       fixUnderflow(p, path);
     }
 
     function del(k) {
       const { path, leaf: L } = descend(k);
+      const tags = { [L.id]: 'L' };
       if (!L.keys.includes(k)) {
-        add({ algo: ['del-1'], title: `${k}* is not in the tree`, text: `Nothing to delete.`, hl: { nodes: { [L.id]: 'active' }, tags: { [L.id]: 'L' } } });
+        add({ algo: ['del-1'], title: `${k}* is not in the tree`, text: `Nothing to delete.`, hl: { nodes: { [L.id]: 'active' }, tags } });
         return;
       }
-      add({ algo: ['del-1'], title: `Found ${k}*`, text: `Remove it from leaf L.`, hl: { nodes: { [L.id]: 'active' }, keys: { [L.id]: { [k]: 'del' } }, tags: { [L.id]: 'L' } } });
+      add({ algo: ['del-1'], title: `Found ${k}*`, text: `It is in leaf L.`, hl: { nodes: { [L.id]: 'active' }, keys: { [L.id]: { [k]: 'del' } }, tags } });
       L.keys.splice(L.keys.indexOf(k), 1);
       if (L === t.root) {
-        add({ algo: ['del-2a'], title: `Removed ${k}*`, text: `L is the root, so the fill factor does not apply.${DONE}`, hl: { nodes: { [L.id]: 'new' }, tags: { [L.id]: 'L' } } });
+        add({ algo: ['del-2a'], title: `Remove ${k}*`, text: `L is the root, so the fill factor does not apply.${DONE}`, hl: { nodes: { [L.id]: 'new' }, tags } });
         return;
       }
+      add({ algo: ['del-1'], title: `Remove ${k}*`, text: `L now holds ${L.keys.length} of ${t.cap} entries.`, hl: { nodes: { [L.id]: 'active' }, tags } });
       if (L.keys.length >= minLeaf(t)) {
-        add({ algo: ['del-2a'], title: `L meets the fill factor`, text: `It still has at least ${minLeaf(t)} entries.${DONE}`, hl: { nodes: { [L.id]: 'new' }, tags: { [L.id]: 'L' } } });
+        add({ algo: ['del-2a'], title: `L meets the fill factor`, text: `${L.keys.length} ≥ ${minLeaf(t)} entries: still at least half full.${DONE}`, hl: { nodes: { [L.id]: 'new' }, tags } });
         return;
       }
-      add({ algo: ['del-2b'], title: `Underflow in L`, text: `L needs at least ${minLeaf(t)} entries.`, hl: { nodes: { [L.id]: 'warn' }, tags: { [L.id]: 'L' } } });
+      add({ algo: ['del-2b'], title: `Underflow in L`, text: `L has ${L.keys.length} ${L.keys.length === 1 ? 'entry' : 'entries'} and needs at least ${minLeaf(t)}.`, hl: { nodes: { [L.id]: 'warn' }, tags } });
       fixUnderflow(L, path);
     }
 
@@ -441,18 +525,21 @@ const ALGO = {
     ['find-2', '2', 'Scan the leaf', '']] }
 };
 const VERB = { insert: 'Insert', delete: 'Delete', search: 'Search' };
-const CW = 32, CH = 30, GAP = 10, GROUP = 12, LG = 78, PAD = 14;
+const CW = 32, CH = 30, GAP = 30, GROUP = 0, LG = 78, PAD = 14;
 let scIdx = 0, sc = null, steps = [], idx = 0, done = new Set(), curPos = null, raf = 0, timer = 0;
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function layout(t) {
-  const pos = {}; let x = 0;
+  const pos = {}; let x = 0, depth = 0;
+  for (let n = t.root; !n.leaf; n = n.children[0]) depth++;
   const W = n => Math.max(t.cap, n.keys.length) * CW;
+  // leaves sit at y = 0 and levels stack upward, so growing or shrinking the height never moves existing nodes
   (function place(n, d) {
-    if (n.leaf) { pos[n.id] = { x, y: d * LG, w: W(n), leaf: true }; x += W(n) + GAP; return; }
+    const top = n.floating ? CH + 10 : 0, skip = n.ghost === 'hidden';
+    if (n.leaf || !n.children.length) { pos[n.id] = { x, y: (d - depth) * LG, w: W(n), leaf: n.leaf, top }; x += W(n) + GAP; return; }
     n.children.forEach(c => place(c, d + 1)); x += GROUP;
     const a = pos[n.children[0].id], b = pos[n.children[n.children.length - 1].id], w = W(n);
-    pos[n.id] = { x: (a.x + b.x + b.w) / 2 - w / 2, y: d * LG, w };
+    pos[n.id] = { x: (a.x + b.x + b.w) / 2 - w / 2, y: (d - depth) * LG, w, top, skip };
   })(t.root, 0);
   return pos;
 }
@@ -464,8 +551,8 @@ function draw(step, pos, fresh, alpha) {
     const p = pos[n.id]; let ptr = 0;
     n.children.forEach((c, j) => {
       const q = pos[c.id];
-      if (!c.floating && !n.ghost) {
-        const x1 = n.keys.length ? p.x + ptr * CW : p.x + p.w / 2;
+      if (!c.loose && !n.ghost) {
+        const x1 = n.keys.length ? p.x + (ptr + (n.ptrOff || 0)) * CW : p.x + p.w / 2;
         o.push(`<line class="edge${hl.edge && hl.edge[0] === n.id && hl.edge[1] === j ? ' on' : ''}" x1="${x1}" y1="${p.y + CH}" x2="${q.x + q.w / 2}" y2="${q.y}"${op(c.id)}/>`);
         ptr++;
       }
@@ -473,12 +560,13 @@ function draw(step, pos, fresh, alpha) {
     });
   })(t.root);
   for (let i = 0; i + 1 < leaves.length; i++) {
-    const a = pos[leaves[i].id], b = pos[leaves[i + 1].id], y = (a.y + b.y) / 2 + CH / 2, x1 = a.x + a.w + 2, x2 = b.x - 2;
-    o.push(`<line class="link" x1="${x1 + 3}" y1="${y}" x2="${x2 - 3}" y2="${y}"/><path class="linkhead" d="M${x1} ${y}l5 -3.5v7zM${x2} ${y}l-5 -3.5v7z"/>`);
+    const a = pos[leaves[i].id], b = pos[leaves[i + 1].id], y = (a.y + b.y) / 2 + CH / 2, x1 = a.x + a.w + 1, x2 = b.x - 2;
+    o.push(`<line class="link" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/><path class="linkhead" d="M${x2 - 6} ${y - 4}L${x2} ${y}L${x2 - 6} ${y + 4}"/>`);
   }
   (function nodes(n) {
     const p = pos[n.id];
-    if (n.ghost) {
+    if (n.ghost === 'hidden') {
+    } else if (n.ghost) {
       o.push(`<g class="idx pending" transform="translate(${p.x},${p.y})"><rect class="box" width="${p.w}" height="${CH}" rx="7"/>`);
       for (let j = 1; j < p.w / CW; j++) o.push(`<line class="div" x1="${j * CW}" y1="1" x2="${j * CW}" y2="${CH - 1}"/>`);
       o.push(`<text class="occ side" x="${p.w + 9}" y="${CH / 2 + 1}">new root</text></g>`);
@@ -488,19 +576,21 @@ function draw(step, pos, fresh, alpha) {
       o.push(`<rect class="box" width="${p.w}" height="${CH}" rx="7"/>`);
       for (let j = 1; j < slots; j++) o.push(`<line class="div" x1="${j * CW}" y1="1" x2="${j * CW}" y2="${CH - 1}"/>`);
       n.keys.forEach((k, j) => {
+        if (k === null) return;
         const c = kh[k];
         if (c) o.push(`<rect class="kc ${c}" x="${j * CW + 3}" y="3" width="${CW - 6}" height="${CH - 6}" rx="5"/>`);
         o.push(`<text class="key${c ? ' hl' : ''}" x="${j * CW + CW / 2}" y="${CH / 2 + 1}">${k}${n.leaf ? '*' : ''}</text>`);
       });
       if (st) o.push(`<rect class="ring" x="-3" y="-3" width="${p.w + 6}" height="${CH + 6}" rx="9"/>`);
-      if (!n.leaf) for (let b = 0; b <= n.keys.length; b++) o.push(`<circle class="dot" cx="${n.keys.length ? b * CW : p.w / 2}" cy="${CH}" r="3"/>`);
+      const np = n.children.filter(c => !c.loose).length;
+      for (let b = 0; b < np; b++) o.push(`<circle class="dot" cx="${n.keys.length ? (b + (n.ptrOff || 0)) * CW : p.w / 2}" cy="${CH}" r="3"/>`);
       const tag = hl.tags && hl.tags[n.id], root = n === t.root, nk = n.keys.length;
       if (n.leaf) {
         const bad = nk > t.cap || (!root && nk < E.minLeaf(t));
         o.push(`<text class="occ${bad ? ' bad' : ''}" x="${p.w / 2}" y="${CH + 17}">${tag ? `<tspan class="tag">${tag}</tspan>  ` : ''}${nk}/${t.cap}</text>`);
       } else {
-        const np = nk + 1, bad = np > t.cap + 1 || np < (root ? 2 : E.minPtr(t));
-        o.push(`<text class="occ side${bad ? ' bad' : ''}" x="${p.w + 9}" y="${CH / 2 + 1}">${np}/${t.cap + 1} ptrs</text>`);
+        const bad = np > t.cap + 1 || np < (root ? 2 : E.minPtr(t));
+        o.push(`<text class="occ side${bad ? ' bad' : ''}" x="${p.w + 9}" y="${CH / 2 + 1}">${tag ? `<tspan class="tag">${tag}</tspan>  ` : ''}${np}/${t.cap + 1} ptrs</text>`);
       }
       if (n.floating) o.push(`<g class="${n.leaf ? 'leaf' : 'idx'}" transform="translate(0,${-CH - 10})"><rect class="box" width="${CW}" height="${CH}" rx="7"/><rect class="kc up" x="3" y="3" width="${CW - 6}" height="${CH - 6}" rx="5"/><text class="key hl" x="${CW / 2}" y="${CH / 2 + 1}">${n.floating.key}</text><text class="occ side up" x="${CW + 8}" y="${CH / 2 + 1}">↑ ${n.floating.mode}</text></g>`);
       o.push('</g>');
@@ -514,10 +604,10 @@ function origins(t) { const m = {}; (function w(n) { if (n.from) m[n.id] = n.fro
 function showTree(animate) {
   cancelAnimationFrame(raf);
   const step = steps[idx], to = layout(step.tree), from = curPos || to, org = origins(step.tree);
-  let minX = Infinity, maxX = -Infinity, maxY = 0;
-  for (const id in to) { const p = to[id]; minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x + p.w + (p.leaf ? 0 : 54)); maxY = Math.max(maxY, p.y); }
-  const W = maxX - minX + PAD * 2, H = maxY + CH + 30 + 14, svg = $('svg');
-  svg.setAttribute('viewBox', `${minX - PAD} -14 ${W} ${H}`);
+  let minX = Infinity, maxX = -Infinity, minY = 0;
+  for (const id in to) { const p = to[id]; if (p.skip) continue; minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x + p.w + (p.leaf ? 0 : 76)); minY = Math.min(minY, p.y - p.top); }
+  const W = maxX - minX + PAD * 2, H = -minY + CH + 30 + 14, svg = $('svg');
+  svg.setAttribute('viewBox', `${minX - PAD} ${minY - 14} ${W} ${H}`);
   const avail = $('scroll').clientWidth - 24, scale = Math.min(1, Math.max(0.3, avail / W));
   svg.style.width = W * scale + 'px'; svg.style.height = H * scale + 'px';
   const fresh = new Set(), start = {};
