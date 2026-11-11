@@ -22,6 +22,27 @@ function phases(steps) {
   return ids.filter((id, i) => id !== ids[i - 1]);
 }
 
+test('search follows equal separators right and scans only the destination leaf', () => {
+  const tree = E.make(4, { k: [10], c: [[1, 2], [10, 14, 19]] });
+  const before = E.clone(tree);
+  const leafId = tree.root.children[1].id;
+  for (const [key, scanned, found] of [
+    [10, [10], true], [19, [10, 14, 19], true],
+    [12, [10, 14], false], [20, [10, 14, 19], false]
+  ]) {
+    const [route, ...scan] = run(tree, 'search', key);
+    assert.deepEqual(route.hl.edges, { [tree.root.id]: 1 });
+    assert.deepEqual(route.hl.keys, { [tree.root.id]: { 10: 'probe' } });
+    assert.deepEqual(scan.map(step => step.hl.keys), scanned.map(entry => ({ [leafId]: { [entry]: 'probe' } })));
+    for (const step of scan) assert.deepEqual(step.hl.edges, route.hl.edges);
+    assert.equal(scan.at(-1).title, found ? `Found ${key}*` : `${key}* is not in the tree`);
+    assert.deepEqual(tree, before);
+  }
+  const empty = run(E.make(4, []), 'search', 0);
+  assert.equal(empty.length, 1);
+  assert.equal(empty[0].text, 'The root leaf is empty.');
+});
+
 test('a full parent splits after a leaf split, copying then promoting', () => {
   const tree = E.make(2, { k: [3, 5], c: [[1, 2], [3, 4], [5, 6]] });
   const steps = run(tree, 'insert', 7);

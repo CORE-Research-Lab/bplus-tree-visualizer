@@ -109,6 +109,8 @@ button{cursor:pointer}
 .s-active .ring{stroke:var(--accent)} .s-new .ring{stroke:var(--new)} .s-warn .ring{stroke:var(--del);stroke-dasharray:6 4}
 .s-sib .ring{stroke:var(--mov);stroke-dasharray:2 4} .s-moved .ring{stroke:var(--mov)}
 .kc{stroke:none}
+.kc.probe{fill:var(--accent)}
+.key.probe{fill:var(--on-accent)}
 .kc.new{fill:var(--new)} .kc.del{fill:var(--del)} .kc.up{fill:var(--up)} .kc.moved{fill:var(--mov)}
 .key.hl{fill:var(--on-sem)}
 .occ{font:600 11.5px var(--f-mono);fill:var(--muted);text-anchor:middle}
@@ -130,6 +132,7 @@ button{cursor:pointer}
     <input id="keys" inputmode="numeric" placeholder="your key" aria-label="Your own key or keys" autocomplete="off">
     <button class="btn" id="doIns">Insert</button>
     <button class="btn" id="doDel">Delete</button>
+    <button class="btn" id="doSearch">Search</button>
     <button class="btn" id="reset">Reset</button>
     <span class="msg" id="msg" role="status"></span>
   </div>
@@ -200,16 +203,24 @@ const E = (() => {
 
     function descend(k) {
       const path = []; let n = t.root;
+      const searchEdges = {};
       while (!n.leaf) {
         const i = route(n, k), r = routeText(n, k, i);
+        const hl = { nodes: { [n.id]: 'active' }, edges: { [n.id]: i } };
+        if (op.type === 'search') {
+          searchEdges[n.id] = i;
+          hl.edges = { ...searchEdges };
+          const bounds = n.keys.slice(Math.max(0, i - 1), i + 1);
+          hl.keys = { [n.id]: Object.fromEntries(bounds.map(key => [key, 'probe'])) };
+        }
         add({
           algo: [algoOf + '-1'], title: r.cmp,
           text: `Follow ${r.ptr}.${i > 0 && n.keys[i - 1] === k ? ' An equal key goes right.' : ''}`,
-          hl: { nodes: { [n.id]: 'active' }, edge: [n.id, i] }
+          hl
         });
         path.push({ n, i }); n = n.children[i];
       }
-      return { path, leaf: n };
+      return { path, leaf: n, searchEdges };
     }
 
     function insert(k) {
@@ -437,9 +448,32 @@ const E = (() => {
     }
 
     function search(k) {
-      const { leaf: L } = descend(k);
-      const f = L.keys.includes(k);
-      add({ algo: ['find-2'], title: f ? `Found ${k}*` : `${k}* is not in the tree`, text: f ? `The data entry is in this leaf.` : `It would be in this leaf, and it is not.`, hl: { nodes: { [L.id]: f ? 'new' : 'active' }, keys: f ? { [L.id]: { [k]: 'new' } } : {} } });
+      const { leaf, searchEdges } = descend(k);
+      const hl = { nodes: { [leaf.id]: 'active' }, edges: searchEdges };
+      const missing = `${k}* is not in the tree`;
+      if (!leaf.keys.length) {
+        add({ algo: ['find-2'], title: missing, text: 'The root leaf is empty.', hl });
+        return;
+      }
+      for (const [i, entry] of leaf.keys.entries()) {
+        const last = i === leaf.keys.length - 1;
+        let title, text;
+        if (entry === k) {
+          title = `Found ${k}*`;
+          text = `The entry in slot ${i + 1} matches the search key.`;
+        } else if (entry > k) {
+          title = missing;
+          text = `${K(entry, 1)} exceeds ${K(k)}. The leaf is sorted, so the scan stops here.`;
+        } else if (last) {
+          title = missing;
+          text = `${K(entry, 1)} is the last entry in this leaf and is smaller than ${K(k)}.`;
+        } else {
+          title = `Compare ${k} with ${entry}*`;
+          text = `${K(entry, 1)} is smaller. Check the next slot in this leaf.`;
+        }
+        add({ algo: ['find-2'], title, text, hl: { ...hl, keys: { [leaf.id]: { [entry]: 'probe' } } } });
+        if (entry >= k) return;
+      }
     }
     ({ insert, delete: del, search })[op.type](op.key);
   }
@@ -534,8 +568,8 @@ const ALGO = {
     ['del-4', '4', 'Merge if neither sibling can lend', 'For leaves, discard the parent separator. For index nodes, pull it down between them. Remove the redundant child pointer.'],
     ['del-5', '5', 'Check the parent', 'Count child pointers. If the parent underflows, repeat from step 3. If the root has just one child, promote that child.']] },
   search: { name: 'Search', cards: [
-    ['find-1', '1', 'Follow one pointer per level', 'Compare keys from the root down'],
-    ['find-2', '2', 'Scan the leaf', '']] }
+    ['find-1', '1', 'Follow one pointer per level', 'The separators mark child ranges. Equality takes the pointer to the right of that separator.'],
+    ['find-2', '2', 'Scan the leaf', 'Check entries from left to right. Stop at a match, a larger entry, or the end of the leaf.']] }
 };
 const VERB = { insert: 'Insert', delete: 'Delete', search: 'Search' };
 const CW = 32, CH = 30, GAP = 30, GROUP = 0, LG = 78, PAD = 14;
@@ -566,7 +600,7 @@ function draw(step, pos, fresh, alpha) {
       const q = pos[c.id];
       if (!c.loose && !n.ghost) {
         const x1 = n.keys.length ? p.x + (ptr + (n.ptrOff || 0)) * CW : p.x + p.w / 2;
-        o.push(`<line class="edge${hl.edge && hl.edge[0] === n.id && hl.edge[1] === j ? ' on' : ''}" x1="${x1}" y1="${p.y + CH}" x2="${q.x + q.w / 2}" y2="${q.y}"${op(c.id)}/>`);
+        o.push(`<line class="edge${hl.edges?.[n.id] === j ? ' on' : ''}" x1="${x1}" y1="${p.y + CH}" x2="${q.x + q.w / 2}" y2="${q.y}"${op(c.id)}/>`);
         ptr++;
       }
       edges(c);
@@ -592,7 +626,7 @@ function draw(step, pos, fresh, alpha) {
         if (k === null) return;
         const c = kh[k];
         if (c) o.push(`<rect class="kc ${c}" x="${j * CW + 3}" y="3" width="${CW - 6}" height="${CH - 6}" rx="5"/>`);
-        o.push(`<text class="key${c ? ' hl' : ''}" x="${j * CW + CW / 2}" y="${CH / 2 + 1}">${k}${n.leaf ? '*' : ''}</text>`);
+        o.push(`<text class="key${c === 'probe' ? ' probe' : c ? ' hl' : ''}" x="${j * CW + CW / 2}" y="${CH / 2 + 1}">${k}${n.leaf ? '*' : ''}</text>`);
       });
       if (st) o.push(`<rect class="ring" x="-3" y="-3" width="${p.w + 6}" height="${CH + 6}" rx="9"/>`);
       const np = n.children.filter(c => !c.loose).length;
@@ -695,6 +729,7 @@ function custom(type) {
   runOps(keys.map(key => ({ type, key })));
 }
 $('doIns').onclick = () => custom('insert'); $('doDel').onclick = () => custom('delete');
+$('doSearch').onclick = () => custom('search');
 $('keys').onkeydown = e => { if (e.key === 'Enter') custom('insert'); };
 $('reset').onclick = () => load(scIdx);
 $('prev').onclick = () => { stop(); go(idx - 1); }; $('next').onclick = () => { stop(); go(idx + 1); };
