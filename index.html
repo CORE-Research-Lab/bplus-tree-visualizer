@@ -163,7 +163,8 @@ button{cursor:pointer}
 <script>
 /* ===== B+ tree engine =====
    cap = max entries in a leaf = max keys in an index node (cap+1 pointers).
-   Routing: a search key equal to a separator goes RIGHT (the copied-up key is the first entry of the right leaf).
+   Routing: left subtree keys < separator <= right subtree keys. Equality goes right.
+   A separator can remain a valid boundary after its leaf entry is deleted.
    Fill factor 50%, counted in pointers: leaf >= ceil(cap/2) entries, index node >= ceil((cap+1)/2) pointers. Root exempt. */
 const E = (() => {
   const clone = o => JSON.parse(JSON.stringify(o));
@@ -219,16 +220,16 @@ const E = (() => {
       }
       const tagL = { [L.id]: 'L' };
       if (L.keys.length < t.cap) {
-        add({ algo: ['ins-2a'], title: `L has space`, text: `L holds ${L.keys.length} of ${t.cap} entries, so ${K(k, 1)} fits.`, hl: { nodes: { [L.id]: 'active' }, tags: tagL } });
+        add({ algo: ['ins-2'], title: `L has space`, text: `L holds ${L.keys.length} of ${t.cap} entries, so ${K(k, 1)} fits.`, hl: { nodes: { [L.id]: 'active' }, tags: tagL } });
         insertSorted(L.keys, k);
-        add({ algo: ['ins-2a'], title: `Insert ${k}* into L`, text: `It goes in at its sorted position.${DONE}`, hl: { nodes: { [L.id]: 'new' }, keys: { [L.id]: { [k]: 'new' } }, tags: tagL } });
+        add({ algo: ['ins-2'], title: `Insert ${k}* into L`, text: `It goes in at its sorted position.${DONE}`, hl: { nodes: { [L.id]: 'new' }, keys: { [L.id]: { [k]: 'new' } }, tags: tagL } });
         return;
       }
-      add({ algo: ['ins-2b'], title: `L is full`, text: `L already holds ${t.cap} of ${t.cap} entries. ${K(k, 1)} does not fit, so L must <b>split</b>.`, hl: { nodes: { [L.id]: 'warn' }, tags: tagL } });
+      add({ algo: ['ins-3'], title: `L is full`, text: `L already holds ${t.cap} of ${t.cap} entries. ${K(k, 1)} does not fit, so L must <b>split</b>.`, hl: { nodes: { [L.id]: 'warn' }, tags: tagL } });
       insertSorted(L.keys, k);
       const mid = Math.floor((t.cap + 1) / 2);
       add({
-        algo: ['ins-2b'], title: `Line up all ${t.cap + 1} entries`,
+        algo: ['ins-3'], title: `Line up all ${t.cap + 1} entries`,
         text: `Put ${K(k, 1)} at its sorted position. The middle key ${K(L.keys[mid], 1)} marks where to split.`,
         hl: { nodes: { [L.id]: 'warn' }, keys: { [L.id]: { [k]: 'new' } }, tags: tagL },
         scratch: { items: L.keys.slice(), mid, star: true, note: 'middle key' }
@@ -236,7 +237,7 @@ const E = (() => {
       let cur = L;
       while (true) {
         const m = Math.floor((t.cap + 1) / 2), leaf = cur.leaf;
-        const A = leaf ? 'L' : 'N', B = leaf ? 'L₂' : 'N₂', al = [leaf ? 'ins-2b' : 'ins-3'], lv = leaf ? null : 'index level';
+        const A = leaf ? 'L' : 'N', B = leaf ? 'L₂' : 'N₂', al = [leaf ? 'ins-3' : 'ins-4'], lv = leaf ? null : 'index level';
         const right = { id: t.nextId++, leaf, keys: [], children: [], from: cur.id, loose: true };
         let parent, pi, grew = false;
         if (path.length) ({ n: parent, i: pi } = path.pop());
@@ -245,7 +246,7 @@ const E = (() => {
         const tags = { [cur.id]: A, [right.id]: B }, pair = { [cur.id]: 'active', [right.id]: 'new' };
         const all = (ks, c) => { const o = {}; ks.forEach(x => o[x] = c); return o; };
         // 1. allocate the new node
-        add({ algo: al, level: lv, title: `Create a new ${leaf ? 'leaf' : 'index node'} ${B}`, text: `${B} starts empty, to the right of ${A}. Nothing points to it yet.`, hl: { nodes: pair, tags } });
+        add({ algo: al, level: lv, title: `Create a new ${leaf ? 'leaf' : 'index node'} ${B}`, text: `${B} starts empty, to the right of ${A}. ${leaf ? 'Link it into the leaf chain. Its parent pointer comes later.' : 'Its parent pointer comes later.'}`, hl: { nodes: pair, tags } });
         // 2. move the upper half across
         let up;
         if (leaf) {
@@ -266,24 +267,24 @@ const E = (() => {
         // 4. no parent → make one
         if (grew) {
           parent.ghost = 'pending';
-          add({ algo: ['ins-3'], level: 'root', title: `No parent: create a new root`, text: `${A} was the root, so ${K(up)} has nowhere to go. A new, empty root is created above.`, hl: { nodes: pair, tags } });
+          add({ algo: ['ins-4'], level: 'root', title: `No parent: create a new root`, text: `${A} was the root, so ${K(up)} has nowhere to go. A new, empty root is created above.`, hl: { nodes: pair, tags } });
         }
         // 5. parent takes the key and the pointer
         delete right.floating; delete right.loose; delete parent.ghost;
         parent.keys.splice(pi, 0, up);
         if (grew) {
-          add({ algo: ['ins-3'], level: 'root', title: `The new root takes ${up}: height grows`, text: `It holds ${K(up)}, with one pointer to ${A} and one to ${B}. The root is exempt from the fill factor.${DONE}`, hl: { nodes: { [parent.id]: 'new' }, keys: { [parent.id]: { [up]: 'up' } }, tags } });
+          add({ algo: ['ins-4'], level: 'root', title: `The new root takes ${up}: height grows`, text: `It holds ${K(up)}, with one pointer to ${A} and one to ${B}. The root is exempt from the fill factor.${DONE}`, hl: { nodes: { [parent.id]: 'new' }, keys: { [parent.id]: { [up]: 'up' } }, tags } });
           return;
         }
         const fits = parent.keys.length <= t.cap;
         add({
-          algo: ['ins-3'], title: `The parent takes ${up}`,
+          algo: ['ins-4'], level: 'index level', title: `The parent takes ${up}`,
           text: `${K(up)} goes in together with a pointer to ${B}. ` + (fits ? `The parent has space.${DONE}` : `That makes ${parent.keys.length} keys, one more than fits.`),
           hl: { nodes: { [parent.id]: fits ? 'new' : 'warn', [right.id]: 'new' }, keys: { [parent.id]: { [up]: 'up' } }, tags }
         });
         if (fits) return;
         add({
-          algo: ['ins-3'], level: 'index level', title: `Overflow in the parent`,
+          algo: ['ins-4'], level: 'index level', title: `Overflow in the parent`,
           text: `The parent must split too. Call it N. Its middle key is ${K(parent.keys[m])}.`,
           hl: { nodes: { [parent.id]: 'warn' }, tags: { [parent.id]: 'N' } },
           scratch: { items: parent.keys.slice(), mid: m, star: false, note: 'middle key' }
@@ -292,40 +293,34 @@ const E = (() => {
       }
     }
 
-    // PDF rule: a page below the fill factor is combined with a sibling. Only when no sibling has room
-    // for the combined contents (the result would overflow one page) is a single record moved over instead.
+    // Algorithm sheet / slide 31: on underflow, first try to redistribute by borrowing from a sibling
+    // (left first, then right). Only if neither can lend, merge with a sibling.
     function fixUnderflow(n, path) {
       const { n: p, i } = path.pop();
       const left = i > 0 ? p.children[i - 1] : null, right = i < p.children.length - 1 ? p.children[i + 1] : null;
       const leaf = n.leaf, name = leaf ? 'L' : 'N', lv = leaf ? null : 'index level', tags = { [n.id]: name };
-      const al = [leaf ? 'del-2b' : 'del-2c'], kind = leaf ? 'leaf' : 'node', unit = leaf ? 'entries' : 'keys';
-      const total = s => n.keys.length + s.keys.length + (leaf ? 0 : 1);
-      const fits = s => s && total(s) <= t.cap;
+      const al = ['del-4'], kind = leaf ? 'leaf' : 'node', unit = leaf ? 'entries' : 'pointers';
+      const min = leaf ? minLeaf(t) : minPtr(t), size = x => leaf ? x.keys.length : x.children.length;
+      const can = x => x && size(x) > min;
       const all = (ks, c) => { const o = {}; ks.forEach(x => o[x] = c); return o; };
-      const ask = (s, side, note) => add({
-        algo: al, level: lv, title: `Combine with the ${side} sibling?`,
-        text: (leaf ? `Together they hold ${total(s)} entries` : `With the separator between them, together they hold ${total(s)} keys`) +
-          (fits(s) ? `, which fits in one page. <b>Combine them.</b>` : `, more than the ${t.cap} a page can hold. They cannot be combined.`) + note,
-        hl: { nodes: { [n.id]: 'warn', [s.id]: 'sib' }, tags }
+      const ask = (x, side, note) => add({
+        algo: ['del-3'], level: lv, title: `Can the ${side} sibling lend?`,
+        text: (can(x) ? `It has ${size(x)} ${unit}, more than the minimum of ${min}. <b>It can lend one.</b>` : `It has the minimum of ${min} ${leaf && min === 1 ? 'entry' : unit}. Lending one would leave it underfull.`) + note,
+        hl: { nodes: { [n.id]: 'warn', [x.id]: 'sib', [p.id]: 'active' }, tags }
       });
       // check one sibling at a time: left first, then right
       let s = null;
-      if (left) { ask(left, 'left', !right && !fits(left) ? ` There is no right sibling under this parent.` : ''); if (fits(left)) s = left; }
-      if (!s && right) { ask(right, 'right', left ? '' : ` (There is no left sibling under this parent.)`); if (fits(right)) s = right; }
-      if (!s) {
-        s = left || right;
+      if (left) { ask(left, 'left', !right && !can(left) ? ` There is no right sibling under this parent.` : ''); if (can(left)) s = left; }
+      if (!s && right) { ask(right, 'right', left ? '' : ` (There is no left sibling under this parent.)`); if (can(right)) s = right; }
+      if (s) {
+        const al = ['del-3'];
         const fromLeft = s === left, si = fromLeft ? i - 1 : i, oldSep = p.keys[si], side = fromLeft ? 'left' : 'right';
-        add({
-          algo: al, level: lv, title: `Cannot combine: move one ${leaf ? 'record' : 'key'} over instead`,
-          text: `The ${side} sibling is too full to combine with, so it has ${unit} to spare. Take one from it.`,
-          hl: { nodes: { [n.id]: 'warn', [s.id]: 'sib' }, tags }
-        });
         let moved;
         if (leaf) {
           if (fromLeft) { moved = s.keys.pop(); n.keys.unshift(moved); } else { moved = s.keys.shift(); n.keys.push(moved); }
           add({
             algo: al, title: `Move ${moved}* from the ${side} sibling`,
-            text: `L is back to ${n.keys.length} entries. But the separator ${K(oldSep)} in the parent is now wrong: ${K(moved, 1)} sits to its ${fromLeft ? 'right and is smaller' : 'left and is not smaller'}.`,
+            text: `L is back to ${n.keys.length} entries. The parent still routes ${K(moved)} to the ${side} sibling. Update its separator so a search reaches L.`,
             hl: { nodes: { [n.id]: 'new', [s.id]: 'sib' }, keys: { [n.id]: { [moved]: 'moved' }, [p.id]: { [oldSep]: 'del' } }, tags }
           });
           const first = fromLeft ? n : s, ns = first.keys[0];
@@ -355,13 +350,18 @@ const E = (() => {
           else { s.keys.shift(); sub = s.children.shift(); n.children.push(sub); }
           add({
             algo: al, level: lv, title: `Move one subtree across`,
-            text: `The sibling's spare pointer moves to N, next to ${K(oldSep)}.${DONE}`,
+            text: `The ${side} sibling’s ${fromLeft ? 'rightmost' : 'leftmost'} child becomes N’s ${fromLeft ? 'leftmost' : 'rightmost'} child. N now has ${n.children.length} pointers and its sibling has ${s.children.length}. Both meet the minimum of ${min}.${DONE}`,
             hl: { nodes: { [n.id]: 'new', [s.id]: 'sib', [sub.id]: 'moved' }, tags }
           });
         }
         return;
       }
-      const withLeft = s === left, Ln = withLeft ? left : n, Rn = withLeft ? n : right, si = withLeft ? i - 1 : i, sep = p.keys[si];
+      const withLeft = !!left, Ln = withLeft ? left : n, Rn = withLeft ? n : right, si = withLeft ? i - 1 : i, sep = p.keys[si];
+      add({
+        algo: al, level: lv, title: `Redistribution fails: merge`,
+        text: `No sibling can lend. <b>Merge</b> ${name} with its ${withLeft ? 'left' : 'right'} sibling.`,
+        hl: { nodes: { [n.id]: 'warn', [(withLeft ? left : right).id]: 'sib' }, tags }
+      });
       if (leaf) {
         const mv = Rn.keys; Ln.keys = Ln.keys.concat(mv); Rn.keys = [];
         add({
@@ -371,8 +371,8 @@ const E = (() => {
         });
         p.keys[si] = null;
         add({
-          algo: al, title: `Remove ${sep} from the index`,
-          text: `The separator ${K(sep)} no longer separates anything. It is removed from the parent, leaving a gap.`,
+          algo: al, title: `Toss ${sep}`,
+          text: `The separator ${K(sep)} no longer separates anything. It is <b>tossed</b> from the parent, leaving a gap.`,
           hl: { nodes: { [p.id]: 'active', [Rn.id]: 'warn' } }
         });
       } else {
@@ -393,22 +393,22 @@ const E = (() => {
       p.keys.splice(si, 1); p.children.splice(si + 1, 1);
       add({
         algo: al, level: lv, title: `Remove the empty ${kind}`,
-        text: `Its pointer leaves the parent and the gap closes. The parent now has ${p.keys.length} key${p.keys.length === 1 ? '' : 's'} and ${p.children.length} pointer${p.children.length === 1 ? '' : 's'}.`,
+        text: `${leaf ? 'Unlink the empty leaf from the leaf chain. ' : ''}Remove its child pointer from the parent and close the gap. The parent now has ${p.keys.length} key${p.keys.length === 1 ? '' : 's'} and ${p.children.length} pointer${p.children.length === 1 ? '' : 's'}.`,
         hl: { nodes: { [Ln.id]: 'new', [p.id]: 'active' } }
       });
       if (p === t.root) {
-        if (p.keys.length === 0) {
-          add({ algo: ['del-2c'], level: 'root', title: `The root is empty`, text: `It has one pointer and no keys.`, hl: { nodes: { [p.id]: 'warn' } } });
-          t.root = Ln;
-          add({ algo: ['del-2c'], level: 'root', title: `Remove the root: height shrinks`, text: `The combined page becomes the root.${DONE}`, hl: { nodes: { [Ln.id]: 'new' } } });
-        } else add({ algo: al, level: 'root', title: `The root is exempt`, text: `The fill factor does not apply to the root.${DONE}`, hl: { nodes: { [p.id]: 'active' } } });
+        if (p.children.length === 1) {
+          add({ algo: ['del-5'], level: 'root', title: `The root has one child`, text: `Its last separator is gone. All remaining entries are under that one child.`, hl: { nodes: { [p.id]: 'warn' } } });
+          t.root = p.children[0];
+          add({ algo: ['del-5'], level: 'root', title: `Promote the only child to root`, text: `The tree loses one level.${DONE}`, hl: { nodes: { [Ln.id]: 'new' } } });
+        } else add({ algo: ['del-5'], level: 'root', title: `The root keeps its children`, text: `An index root needs at least two children. It still has ${p.children.length}.${DONE}`, hl: { nodes: { [p.id]: 'active' } } });
         return;
       }
       if (p.children.length >= minPtr(t)) {
-        add({ algo: al, title: `The index page meets the fill factor`, text: `It still has at least ${minPtr(t) - 1} keys.${DONE}`, hl: { nodes: { [p.id]: 'active' } } });
+        add({ algo: ['del-5'], level: 'index level', title: `The parent meets its minimum`, text: `It still has at least ${minPtr(t)} pointers.${DONE}`, hl: { nodes: { [p.id]: 'active' } } });
         return;
       }
-      add({ algo: ['del-2c'], level: 'index level', title: `The index page is below the fill factor`, text: `It has ${p.keys.length} key${p.keys.length === 1 ? '' : 's'} and needs at least ${minPtr(t) - 1}. Call it N and combine it the same way, one level up.`, hl: { nodes: { [p.id]: 'warn' }, tags: { [p.id]: 'N' } } });
+      add({ algo: ['del-5'], level: 'index level', title: `The parent underflows`, text: `It has ${p.children.length} pointer${p.children.length === 1 ? '' : 's'} and needs at least ${minPtr(t)}. Call this index node N. Check its siblings under the same parent, one level up.`, hl: { nodes: { [p.id]: 'warn' }, tags: { [p.id]: 'N' } } });
       fixUnderflow(p, path);
     }
 
@@ -422,23 +422,17 @@ const E = (() => {
       add({ algo: ['del-1'], title: `Found ${k}*`, text: `It is in leaf L.`, hl: { nodes: { [L.id]: 'active' }, keys: { [L.id]: { [k]: 'del' } }, tags } });
       L.keys.splice(L.keys.indexOf(k), 1);
       if (L === t.root) {
-        add({ algo: ['del-2a'], title: `Remove ${k}*`, text: `L is the root, so the fill factor does not apply.${DONE}`, hl: { nodes: { [L.id]: 'new' }, tags } });
+        add({ algo: ['del-2'], title: `Remove ${k}*`, text: `${L.keys.length ? 'A root leaf has no minimum occupancy.' : 'The tree is empty. Keep this leaf as the root.'}${DONE}`, hl: { nodes: { [L.id]: 'new' }, tags } });
         return;
       }
-      add({ algo: ['del-1'], title: `Remove ${k}*`, text: `L now holds ${L.keys.length} of ${t.cap} entries.`, hl: { nodes: { [L.id]: 'active' }, tags } });
-      // PDF rule: a deleted key that also appears in an index page is replaced there by the next key
-      const hit = path.find(e => e.i > 0 && e.n.keys[e.i - 1] === k), pe = path[path.length - 1];
-      const src = L.keys.length ? L : hit && hit !== pe ? pe.n.children[pe.i + 1] : null;
-      if (hit && src) {
-        const nk = src.keys[0];
-        hit.n.keys[hit.i - 1] = nk;
-        add({ algo: ['del-1'], title: `Replace ${k} in the index with ${nk}`, text: `${K(k)} also appears in an index page. The next key, ${K(nk, 1)}, takes its place.`, hl: { nodes: { [L.id]: 'active', [hit.n.id]: 'active' }, keys: { [hit.n.id]: { [nk]: 'up' }, [src.id]: { [nk]: 'up' } }, tags } });
-      }
+      add({ algo: ['del-2'], title: `Remove ${k}*`, text: `L now holds ${L.keys.length} of ${t.cap} entries.`, hl: { nodes: { [L.id]: 'active' }, tags } });
       if (L.keys.length >= minLeaf(t)) {
-        add({ algo: ['del-2a'], title: `L meets the fill factor`, text: `${L.keys.length} ≥ ${minLeaf(t)} entries: still at least half full.${DONE}`, hl: { nodes: { [L.id]: 'new' }, tags } });
+        const boundary = path.find(({ n, i }) => i > 0 && n.keys[i - 1] === k);
+        const note = boundary ? ` Keep ${K(k)} in the index. Keys to its left are still smaller, and keys to its right are still at least ${K(k)}.` : '';
+        add({ algo: ['del-2'], title: `L meets its minimum`, text: `L has ${L.keys.length} of ${t.cap} entries and needs at least ${minLeaf(t)}.${note}${DONE}`, hl: { nodes: { [L.id]: 'new' }, keys: boundary ? { [boundary.n.id]: { [k]: 'up' } } : {}, tags } });
         return;
       }
-      add({ algo: ['del-2b'], title: `L is below the fill factor`, text: `L has ${L.keys.length} ${L.keys.length === 1 ? 'entry' : 'entries'} and needs at least ${minLeaf(t)}.`, hl: { nodes: { [L.id]: 'warn' }, tags } });
+      add({ algo: ['del-3'], title: `L underflows`, text: `L has ${L.keys.length} ${L.keys.length === 1 ? 'entry' : 'entries'} and needs at least ${minLeaf(t)}.`, hl: { nodes: { [L.id]: 'warn' }, tags } });
       fixUnderflow(L, path);
     }
 
@@ -458,7 +452,8 @@ const E = (() => {
     (function walk(n, lo, hi, d) {
       for (let j = 0; j < n.keys.length; j++) {
         if (j && n.keys[j - 1] >= n.keys[j]) errs.push('unsorted ' + n.id);
-        if (n.leaf && (n.keys[j] < lo || n.keys[j] >= hi)) errs.push('range ' + n.id);
+        const key = n.keys[j];
+        if (!Number.isInteger(key) || key < lo || key >= hi || (!n.leaf && key === lo)) errs.push('range ' + n.id);
       }
       if (n.keys.length > t.cap) errs.push('overfull ' + n.id);
       if (n.leaf) {
@@ -487,9 +482,9 @@ const SCENARIOS = [
   },
   {
     name: 'Handout example', cap: 4, level: 'B+ Trees Examples handout',
-    blurb: 'The tree and the six operations from the handout, in the same order.',
+    blurb: 'The tree and the six operations from the handout, run with the lecture algorithm (borrow before merge), including a deletion that leaves a valid index separator and a merge that reaches the root.',
     tree: { k: [25, 50, 75], c: [[5, 10, 15, 20], [25, 30], [50, 55, 60, 65], [75, 80, 85, 90]] },
-    ops: [['insert', 28, 'leaf has room'], ['insert', 70, 'leaf full, index not full'], ['insert', 95, 'leaf and index both full'], ['delete', 70, 'still half full'], ['delete', 25, 'key also in the index: replaced by 28'], ['delete', 60, 'leaf combine, index combine, height shrinks']]
+    ops: [['insert', 28, 'leaf has room'], ['insert', 70, 'leaf full, index not full'], ['insert', 95, 'leaf and index both full'], ['delete', 70, 'still half full'], ['delete', 25, 'still half full, 25 stays in the index'], ['delete', 60, 'leaf merge, index merge, height shrinks']]
   },
   {
     name: 'Insert example', cap: 4, level: 'Lecture 8, slides 26–30',
@@ -501,23 +496,23 @@ const SCENARIOS = [
     name: 'Delete example', cap: 4, level: 'Lecture 8, slides 31–34',
     blurb: 'The tree from the deletion slides. Deleting 24* merges two leaves, then two index nodes, and the tree loses a level.',
     tree: { k: [17], c: [{ k: [5, 13], c: [[2, 3], [5, 7, 8], [14, 16]] }, { k: [27, 30], c: [[22, 24], [27, 29], [33, 34, 38, 39]] }] },
-    ops: [['delete', 24, 'leaf combine, index combine, height shrinks'], ['delete', 14, 'combine with the left sibling'], ['delete', 22, 'still half full'], ['delete', 27, 'no sibling has room, so one record moves over'], ['delete', 3, 'combine leaves, the root is exempt']]
+    ops: [['delete', 24, 'leaf merge, index merge, height shrinks'], ['delete', 14, 'borrow from left sibling'], ['delete', 22, 'still half full'], ['delete', 27, 'borrow from right sibling'], ['delete', 3, 'merge leaves, the root is exempt']]
   },
   {
     name: 'Small nodes', cap: 2, level: 'Lecture 8, slides 21–22',
     blurb: 'The three-level tree from the structure slides, with 2 keys and 3 pointers per node. Small nodes make splits and merges cascade quickly.',
     tree: { k: [30, 65], c: [{ k: [15, 21], c: [[2, 7], [16, 20], [22, 29]] }, { k: [41], c: [[35, 37], [42, 50]] }, { k: [78], c: [[67, 77], [80, 91]] }] },
-    ops: [['insert', 17, 'splits cascade to the root, height 4'], ['delete', 91, 'still half full'], ['delete', 80, 'combines cascade to the root, height shrinks'], ['delete', 35, 'still half full'], ['delete', 37, 'combine with the right sibling'], ['delete', 50, 'still half full']]
+    ops: [['insert', 17, 'splits cascade to the root, height 4'], ['delete', 91, 'still half full'], ['delete', 80, 'borrow from left sibling'], ['delete', 35, 'still half full'], ['delete', 37, 'borrow from right sibling'], ['delete', 50, 'merges cascade to the root, height shrinks']]
   },
   {
     name: 'Shifting a subtree', cap: 4, level: 'Larger',
-    blurb: 'A wider tree where one index node is full and its neighbour is at the minimum. They cannot be combined, so deletions on the poor side pull a whole subtree across through the root.',
+    blurb: 'A wider tree where one index node is rich and its neighbour is at the minimum. Deletions on the poor side pull a whole subtree across through the root.',
     tree: {
       k: [50], c: [
         { k: [10, 20, 30, 40], c: [[1, 4], [10, 12, 15], [20, 22], [30, 33, 36], [40, 44]] },
         { k: [60, 70], c: [[50, 55], [60, 65], [70, 75, 80]] }]
     },
-    ops: [['delete', 55, 'leaf combine, index sibling too full to combine: a subtree moves across'], ['delete', 75, 'still half full'], ['delete', 65, 'still half full'], ['delete', 70, 'index key replaced, leaf combine, a subtree moves across again'], ['delete', 80, 'still half full'], ['delete', 60, 'leaf combine, index combine, height shrinks'], ['insert', 13, 'room'], ['insert', 11, 'leaf split, root split, height grows again']]
+    ops: [['delete', 55, 'leaf merge, index borrows a subtree from the left'], ['delete', 75, 'still half full'], ['delete', 65, 'still half full'], ['delete', 70, 'leaf merge, index borrows again'], ['delete', 80, 'still half full'], ['delete', 60, 'leaf merge, index merge, height shrinks'], ['insert', 13, 'room'], ['insert', 11, 'leaf split, root split, height grows again']]
   }
 ];
 if (typeof module !== 'undefined') module.exports = SCENARIOS;
@@ -528,15 +523,16 @@ if (typeof module !== 'undefined') module.exports = SCENARIOS;
 const $ = id => document.getElementById(id);
 const ALGO = {
   insert: { name: 'Insert', cards: [
-    ['ins-1', '1', 'Find the leaf L', 'Compare keys from the root down'],
-    ['ins-2a', '2a', 'L has space', 'Insert. Done.'],
-    ['ins-2b', '2b', 'L is full → split', 'Copy up the middle key'],
-    ['ins-3', '3', 'Insert into the parent', 'On overflow: split, push up the middle key']] },
+    ['ins-1', '1', 'Find the correct leaf L', 'Traverse from the root'],
+    ['ins-2', '2', 'If L has space', 'Insert and done.'],
+    ['ins-3', '3', 'Split the overflowing leaf', 'Include the new entry in sorted order. Copy the first key of the new right leaf up. Its data entry stays in the leaf.'],
+    ['ins-4', '4', 'Insert the separator and child pointer', 'If the parent overflows, split its children and push its middle separator up. Repeat up the tree. A split at the root creates a new root.']] },
   delete: { name: 'Delete', cards: [
-    ['del-1', '1', 'Find the leaf L, delete the record', 'If the key also appears in an index page, the next key replaces it'],
-    ['del-2a', '2a', 'L is still ≥ half full', 'Done.'],
-    ['del-2b', '2b', 'L below the fill factor → combine', 'Combine L with a sibling and remove the separator from the index page. If no sibling has room, move one record over instead.'],
-    ['del-2c', '2c', 'Index page below the fill factor → combine', 'Pull the separator down and combine with a sibling. Repeat up to the root.']] },
+    ['del-1', '1', 'Find the leaf L containing the entry', 'Traverse from the root'],
+    ['del-2', '2', 'Remove the leaf entry', 'Stop if L is the root or still at least half full.'],
+    ['del-3', '3', 'Try to borrow', 'Check adjacent siblings under the same parent, left first. A leaf borrows an entry and updates the separator. An index node borrows a child and rotates a separator through the parent.'],
+    ['del-4', '4', 'Merge if neither sibling can lend', 'For leaves, discard the parent separator. For index nodes, pull it down between them. Remove the redundant child pointer.'],
+    ['del-5', '5', 'Check the parent', 'Count child pointers. If the parent underflows, repeat from step 3. If the root has just one child, promote that child.']] },
   search: { name: 'Search', cards: [
     ['find-1', '1', 'Follow one pointer per level', 'Compare keys from the root down'],
     ['find-2', '2', 'Scan the leaf', '']] }
@@ -661,7 +657,7 @@ function renderNow() {
   $('count').textContent = s.op ? `${VERB[s.op.type]} ${s.op.key}* · step ${idx + 1} of ${steps.length}` : '';
   let h = 1; for (let n = s.tree.root; !n.leaf; n = n.children[0]) if (!n.ghost) h++;
   const c = s.tree.cap;
-  $('facts').innerHTML = `<span>order <b>d = ${c / 2}</b></span><span><b>${c / 2}–${c}</b> entries per node</span><span>height <b>${h}</b></span>`;
+  $('facts').innerHTML = `<span>order <b>d = ${c / 2}</b></span><span>non-root leaf <b>${E.minLeaf(s.tree)}–${c}</b> entries</span><span>non-root index <b>${E.minPtr(s.tree)}–${c + 1}</b> pointers</span><span>height <b>${h}</b></span>`;
   $('title').innerHTML = s.title; $('text').innerHTML = s.text;
   const sc = $('scratch'); sc.hidden = !s.scratch;
   if (s.scratch) sc.innerHTML = s.scratch.items.map((v, i) => `<i class="${i === s.scratch.mid ? 'mid' : ''}">${v}${s.scratch.star ? '*' : ''}</i>`).join('') + `<em>${s.scratch.note}</em>`;
@@ -680,11 +676,11 @@ function runOps(ops) {
   steps = out; idx = 0; render();
 }
 function renderOps() {
-  $('ops').innerHTML = sc.ops.map((o, i) => `<button class="op${done.has(i) ? ' done' : ''}" data-i="${i}" title="${o[2]}">${VERB[o[0]]} ${o[1]}</button>`).join('');
+  $('ops').innerHTML = sc.ops.map((o, i) => `<button class="op${done.has(i) ? ' done' : ''}" data-i="${i}" title="In the example sequence: ${o[2]}">${VERB[o[0]]} ${o[1]}</button>`).join('');
 }
 function load(i) {
   stop(); scIdx = i; sc = SCENARIOS[i]; done = new Set(); curPos = null;
-  steps = [idle(E.make(sc.cap, sc.tree), sc.name, 'Run an operation above, then step through it.')];
+  steps = [idle(E.make(sc.cap, sc.tree), sc.name, 'For the example sequence, run the operations from left to right. Use Next to step through each one.')];
   idx = 0;
   $('presets').innerHTML = SCENARIOS.map((s, j) => `<button class="preset" data-i="${j}" aria-pressed="${j === i}">${s.name}</button>`).join('');
   render(false);
